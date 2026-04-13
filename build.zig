@@ -81,7 +81,7 @@ fn addMbedtlsBuild(
         "-DCMAKE_C_FLAGS=-DMBEDTLS_SSL_DTLS_SRTP",
         "-DENABLE_TESTING=OFF",
         "-DENABLE_PROGRAMS=OFF",
-        "-DGEN_FILES=OFF",
+        "-DGEN_FILES=ON",
         "-DMBEDTLS_FATAL_WARNINGS=OFF",
         "-DUSE_SHARED_MBEDTLS_LIBRARY=ON",
         "-DUSE_STATIC_MBEDTLS_LIBRARY=OFF",
@@ -220,6 +220,35 @@ fn addLibDataChannelSharedBuild(
     return install_lib;
 }
 
+fn addLibDataChannelWrapperBuild(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    wrapper_name: []const u8,
+) *std.Build.Step.InstallArtifact {
+    const wrapper = b.addLibrary(.{
+        .name = wrapper_name,
+        .linkage = .dynamic,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    wrapper.linkLibC();
+    wrapper.linkSystemLibrary("dl");
+    wrapper.linkSystemLibrary("pthread");
+    wrapper.addCSourceFile(.{
+        .file = b.path("src/libdatachannel_wrapper.c"),
+        .flags = &.{ "-std=c11", "-fPIC" },
+    });
+    wrapper.root_module.addIncludePath(b.path("include"));
+    wrapper.root_module.addIncludePath(b.path("vendor/libdatachannel/include"));
+
+    return b.addInstallArtifact(wrapper, .{});
+}
+
 fn buildForTarget(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
@@ -231,6 +260,8 @@ fn buildForTarget(
     const target_str = build_utils.getTargetString(target);
     const lib_name = build_utils.getLibName(std.heap.page_allocator, "datachannel", target_str);
     const install_lib = addLibDataChannelSharedBuild(b, target, optimize, lib_name);
+    const wrapper_name = build_utils.getLibName(std.heap.page_allocator, "datachannel_wrapper", target_str);
+    const install_wrapper = addLibDataChannelWrapperBuild(b, target, optimize, wrapper_name);
 
     const hash_step = build_utils.HashAndMoveStep.create(
         b,
@@ -240,6 +271,7 @@ fn buildForTarget(
         hashes,
     );
     hash_step.step.dependOn(&install_lib.step);
+    hash_step.step.dependOn(&install_wrapper.step);
 
     json_step.step.dependOn(&hash_step.step);
 }
@@ -250,6 +282,19 @@ pub fn build(b: *std.Build) void {
     const json_path = "current.json";
 
     const build_all = b.option(bool, "all", "Build for all supported targets") orelse false;
+    const ffi_only = b.option(bool, "ffi_only", "Build only libdatachannel_wrapper (skip upstream core build)") orelse false;
+
+    if (ffi_only) {
+        const target = b.standardTargetOptions(.{});
+        const install_wrapper = addLibDataChannelWrapperBuild(b, target, optimize, "datachannel_wrapper");
+        const install_wrapper_h = b.addInstallHeaderFile(
+            b.path("include/libdatachannel_wrapper.h"),
+            "libdatachannel_wrapper.h",
+        );
+        b.getInstallStep().dependOn(&install_wrapper.step);
+        b.getInstallStep().dependOn(&install_wrapper_h.step);
+        return;
+    }
 
     if (build_all) {
         const hashes = build_utils.createHashMap(b);
@@ -264,6 +309,7 @@ pub fn build(b: *std.Build) void {
     } else {
         const target = b.standardTargetOptions(.{});
         const install_lib = addLibDataChannelSharedBuild(b, target, optimize, "datachannel");
+        const install_wrapper = addLibDataChannelWrapperBuild(b, target, optimize, "datachannel_wrapper");
         const install_rtc_h = b.addInstallHeaderFile(
             b.path("vendor/libdatachannel/include/rtc/rtc.h"),
             "rtc/rtc.h",
@@ -272,9 +318,15 @@ pub fn build(b: *std.Build) void {
             b.path("vendor/libdatachannel/include/rtc/version.h"),
             "rtc/version.h",
         );
+        const install_wrapper_h = b.addInstallHeaderFile(
+            b.path("include/libdatachannel_wrapper.h"),
+            "libdatachannel_wrapper.h",
+        );
 
         b.getInstallStep().dependOn(&install_lib.step);
+        b.getInstallStep().dependOn(&install_wrapper.step);
         b.getInstallStep().dependOn(&install_rtc_h.step);
         b.getInstallStep().dependOn(&install_version_h.step);
+        b.getInstallStep().dependOn(&install_wrapper_h.step);
     }
 }
