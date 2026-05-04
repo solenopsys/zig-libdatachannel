@@ -75,9 +75,9 @@ fn addMbedtlsBuild(
         "-DCMAKE_SYSTEM_NAME=Linux",
         b.fmt("-DCMAKE_SYSTEM_PROCESSOR={s}", .{target_parts.arch}),
         "-DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY",
-        "-DCMAKE_C_COMPILER=zig",
-        "-DCMAKE_C_COMPILER_ARG1=cc",
+        b.fmt("-DCMAKE_C_COMPILER={s};cc", .{b.graph.zig_exe}),
         b.fmt("-DCMAKE_C_COMPILER_TARGET={s}", .{target_triple}),
+        "-DCMAKE_BUILD_WITH_INSTALL_RPATH=ON",
         "-DCMAKE_C_FLAGS=-DMBEDTLS_SSL_DTLS_SRTP",
         "-DENABLE_TESTING=OFF",
         "-DENABLE_PROGRAMS=OFF",
@@ -150,12 +150,11 @@ fn addLibDataChannelSharedBuild(
         "-DCMAKE_SYSTEM_NAME=Linux",
         b.fmt("-DCMAKE_SYSTEM_PROCESSOR={s}", .{target_parts.arch}),
         "-DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY",
-        "-DCMAKE_C_COMPILER=zig",
-        "-DCMAKE_C_COMPILER_ARG1=cc",
-        "-DCMAKE_CXX_COMPILER=zig",
-        "-DCMAKE_CXX_COMPILER_ARG1=c++",
+        b.fmt("-DCMAKE_C_COMPILER={s};cc", .{b.graph.zig_exe}),
+        b.fmt("-DCMAKE_CXX_COMPILER={s};c++", .{b.graph.zig_exe}),
         b.fmt("-DCMAKE_C_COMPILER_TARGET={s}", .{target_triple}),
         b.fmt("-DCMAKE_CXX_COMPILER_TARGET={s}", .{target_triple}),
+        "-DCMAKE_BUILD_WITH_INSTALL_RPATH=ON",
         "-DCMAKE_C_FLAGS=-DMBEDTLS_SSL_DTLS_SRTP",
         "-DCMAKE_CXX_FLAGS=-DMBEDTLS_SSL_DTLS_SRTP",
         "-DBUILD_SHARED_LIBS=ON",
@@ -236,10 +235,10 @@ fn addLibDataChannelWrapperBuild(
         }),
     });
 
-    wrapper.linkLibC();
-    wrapper.linkSystemLibrary("dl");
-    wrapper.linkSystemLibrary("pthread");
-    wrapper.addCSourceFile(.{
+    wrapper.root_module.link_libc = true;
+    wrapper.root_module.linkSystemLibrary("dl", .{});
+    wrapper.root_module.linkSystemLibrary("pthread", .{});
+    wrapper.root_module.addCSourceFile(.{
         .file = b.path("src/libdatachannel_wrapper.c"),
         .flags = &.{ "-std=c11", "-fPIC" },
     });
