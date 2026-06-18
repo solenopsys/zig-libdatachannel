@@ -102,6 +102,7 @@ struct ldc_wrapper {
     int (*rtcSetMessageCallback)(int id, rtcMessageCallbackFunc cb);
 
     int (*rtcSendMessage)(int id, const char *data, int size);
+    int (*rtcSetOpusPacketizer)(int tr, const rtcPacketizerInit *init);
     int (*rtcClose)(int id);
     int (*rtcDelete)(int id);
     bool (*rtcIsOpen)(int id);
@@ -295,9 +296,13 @@ static void RTC_API ldc_error_bridge(int id, const char *error, void *ptr) {
 
 static void RTC_API ldc_message_bridge(int id, const char *message, int size, void *ptr) {
     ldc_id_ctx *ctx = (ldc_id_ctx *)ptr;
-    if (ctx != NULL && ctx->on_message != NULL && size >= 0) {
-        ctx->on_message(id, (const uint8_t *)message, (size_t)size, ctx->on_message_user);
-    }
+    if (ctx == NULL || ctx->on_message == NULL || message == NULL) return;
+    // libdatachannel signals STRING (text) messages with a negative size and a
+    // null-terminated buffer; BINARY messages use size >= 0. OpenAI Realtime
+    // delivers its JSON events as text, so dropping size < 0 (the old behaviour)
+    // silently lost every data-channel event (transcripts included).
+    size_t len = (size >= 0) ? (size_t)size : strlen(message);
+    ctx->on_message(id, (const uint8_t *)message, len, ctx->on_message_user);
 }
 
 static int32_t ldc_read_rtc_string(
@@ -407,6 +412,7 @@ int32_t ldc_wrapper_create(ldc_wrapper_t **out_handle, const char *lib_path) {
     LDC_LOAD_REQUIRED(rtcSetMessageCallback);
 
     LDC_LOAD_REQUIRED(rtcSendMessage);
+    LDC_LOAD_OPTIONAL(rtcSetOpusPacketizer);
     LDC_LOAD_REQUIRED(rtcClose);
     LDC_LOAD_REQUIRED(rtcDelete);
     LDC_LOAD_REQUIRED(rtcIsOpen);
@@ -466,6 +472,14 @@ int32_t ldc_create_peer_connection(ldc_wrapper_t *handle, const char *stun_url, 
         cfg.iceServers = servers;
         cfg.iceServersCount = 1;
     }
+
+    // All our flows drive signaling explicitly (offerer calls
+    // setLocalDescription("offer"); answerer calls setLocalDescription() after
+    // setRemoteDescription(offer)). Leaving auto-negotiation on makes
+    // libdatachannel re-generate a fresh OFFER right after we set the ANSWER,
+    // so getLocalDescription() returns an offer (setup:actpass) instead of the
+    // answer — both peers end up actpass and the DTLS handshake deadlocks.
+    cfg.disableAutoNegotiation = true;
 
     const int pc = handle->rtcCreatePeerConnection(&cfg);
     if (pc < 0) {
@@ -865,6 +879,12 @@ int32_t ldc_send_message(ldc_wrapper_t *handle, int32_t id, const uint8_t *data,
     return handle->rtcSendMessage(id, (const char *)data, (int)len);
 }
 
+// Send binary data (negative size = binary in libdatachannel API). Use for audio tracks.
+int32_t ldc_send_binary(ldc_wrapper_t *handle, int32_t id, const uint8_t *data, size_t len) {
+    if (!handle || (!data && len > 0) || len > (size_t)INT32_MAX) return RTC_ERR_INVALID;
+    return handle->rtcSendMessage(id, (const char *)data, -(int)len);
+}
+
 int32_t ldc_close_id(ldc_wrapper_t *handle, int32_t id) {
     if (!handle) return RTC_ERR_INVALID;
     return handle->rtcClose(id);
@@ -910,4 +930,14 @@ int32_t ldc_free_buffer(uint8_t *ptr, size_t len) {
 const char *ldc_last_error(ldc_wrapper_t *handle) {
     if (!handle) return "invalid handle";
     return handle->last_error;
+}
+
+int32_t ldc_set_opus_packetizer(ldc_wrapper_t *handle, int32_t track, uint8_t payload_type, uint32_t clock_rate) {
+    if (!handle) return RTC_ERR_INVALID;
+    if (!handle->rtcSetOpusPacketizer) return RTC_ERR_NOT_AVAIL;
+    rtcPacketizerInit init;
+    memset(&init, 0, sizeof(init));
+    init.payloadType = payload_type;
+    init.clockRate = clock_rate;
+    return handle->rtcSetOpusPacketizer(track, &init);
 }

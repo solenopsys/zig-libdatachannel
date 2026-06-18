@@ -11,6 +11,7 @@ Prerequisites:
 
 - Zig `0.15.2+`
 - `cmake` and `ninja`
+- OpenSSL development package available to CMake/pkg-config
 - initialized submodules (including nested deps)
 
 Initialize dependencies:
@@ -54,6 +55,7 @@ Single-target output:
 
 - `NO_EXAMPLES=ON` and `NO_TESTS=ON` are enabled for wrapper builds.
 - The wrapper keeps WebSocket and media features enabled by default.
+- The upstream `libdatachannel` build uses OpenSSL. The shared MbedTLS wrapper is still built separately for services that load it directly; the vendored MbedTLS 4.x headers are not compatible with libSRTP's MbedTLS backend in `libdatachannel 0.24.2`.
 
 ## Wrapper API Coverage
 

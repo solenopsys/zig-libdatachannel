@@ -127,16 +127,8 @@ fn addLibDataChannelSharedBuild(
     const cmake_build_type = getCmakeBuildType(optimize);
     const target_parts = getTargetParts(target);
     const target_triple = b.fmt("{s}-linux-{s}", .{ target_parts.arch, target_parts.libc });
-    const cmake_build_dir = b.fmt(".zig-cache/libdatachannel-mbedtls/{s}/{s}", .{ target_str, cmake_build_type });
+    const cmake_build_dir = b.fmt(".zig-cache/libdatachannel-openssl/{s}/{s}", .{ target_str, cmake_build_type });
     const cmake_install_dir = b.fmt("{s}/install", .{cmake_build_dir});
-    const mbedtls_build = addMbedtlsBuild(b, target, optimize);
-    const mbedtls_prefix = mbedtls_build.install_dir;
-    const mbedtls_cmake_dir = b.fmt("{s}/lib/cmake/MbedTLS", .{mbedtls_prefix});
-    const mbedtls_include_dir = b.fmt("{s}/include", .{mbedtls_prefix});
-    const mbedtls_lib_dir = b.fmt("{s}/lib", .{mbedtls_prefix});
-    const mbedtls_lib = b.fmt("{s}/libmbedtls.so", .{mbedtls_lib_dir});
-    const mbedcrypto_lib = b.fmt("{s}/libmbedcrypto.so", .{mbedtls_lib_dir});
-    const mbedx509_lib = b.fmt("{s}/libmbedx509.so", .{mbedtls_lib_dir});
 
     const configure = b.addSystemCommand(&[_][]const u8{
         "cmake",
@@ -155,8 +147,6 @@ fn addLibDataChannelSharedBuild(
         b.fmt("-DCMAKE_C_COMPILER_TARGET={s}", .{target_triple}),
         b.fmt("-DCMAKE_CXX_COMPILER_TARGET={s}", .{target_triple}),
         "-DCMAKE_BUILD_WITH_INSTALL_RPATH=ON",
-        "-DCMAKE_C_FLAGS=-DMBEDTLS_SSL_DTLS_SRTP",
-        "-DCMAKE_CXX_FLAGS=-DMBEDTLS_SSL_DTLS_SRTP",
         "-DBUILD_SHARED_LIBS=ON",
         "-DBUILD_SHARED_DEPS_LIBS=OFF",
         "-DPREFER_SYSTEM_LIB=OFF",
@@ -165,24 +155,17 @@ fn addLibDataChannelSharedBuild(
         "-DUSE_SYSTEM_USRSCTP=OFF",
         "-DUSE_SYSTEM_PLOG=OFF",
         "-DUSE_SYSTEM_JSON=OFF",
-        "-DUSE_MBEDTLS=ON",
+        "-DUSE_MBEDTLS=OFF",
         "-DUSE_GNUTLS=OFF",
-        "-DENABLE_MBEDTLS=ON",
-        "-DENABLE_OPENSSL=OFF",
-        "-DMBEDTLS=ON",
-        "-DOPENSSL=OFF",
-        b.fmt("-DCMAKE_PREFIX_PATH={s}", .{mbedtls_prefix}),
-        b.fmt("-DMbedTLS_DIR={s}", .{mbedtls_cmake_dir}),
-        b.fmt("-DMbedTLS_INCLUDE_DIR={s}", .{mbedtls_include_dir}),
-        b.fmt("-DMbedTLS_LIBRARY={s}", .{mbedtls_lib}),
-        b.fmt("-DMbedCrypto_LIBRARY={s}", .{mbedcrypto_lib}),
-        b.fmt("-DMbedX509_LIBRARY={s}", .{mbedx509_lib}),
+        "-DENABLE_MBEDTLS=OFF",
+        "-DENABLE_OPENSSL=ON",
+        "-DMBEDTLS=OFF",
+        "-DOPENSSL=ON",
         "-DNO_EXAMPLES=ON",
         "-DNO_TESTS=ON",
         "-DRTC_UPDATE_VERSION_HEADER=OFF",
     });
     configure.setName(b.fmt("configure libdatachannel ({s})", .{target_str}));
-    configure.step.dependOn(mbedtls_build.install_step);
 
     const build_cmd = b.addSystemCommand(&[_][]const u8{
         "cmake",

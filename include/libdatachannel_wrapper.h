@@ -82,6 +82,7 @@ int32_t ldc_set_closed_callback(ldc_wrapper_t *handle, int32_t id, ldc_closed_cb
 int32_t ldc_set_error_callback(ldc_wrapper_t *handle, int32_t id, ldc_error_cb cb, void *user);
 int32_t ldc_set_message_callback(ldc_wrapper_t *handle, int32_t id, ldc_message_cb cb, void *user);
 int32_t ldc_send_message(ldc_wrapper_t *handle, int32_t id, const uint8_t *data, size_t len);
+int32_t ldc_send_binary(ldc_wrapper_t *handle, int32_t id, const uint8_t *data, size_t len);
 int32_t ldc_close_id(ldc_wrapper_t *handle, int32_t id);
 int32_t ldc_delete_id(ldc_wrapper_t *handle, int32_t id);
 int32_t ldc_is_open(ldc_wrapper_t *handle, int32_t id);
@@ -89,6 +90,8 @@ int32_t ldc_is_closed(ldc_wrapper_t *handle, int32_t id);
 
 int32_t ldc_free_buffer(uint8_t *ptr, size_t len);
 const char *ldc_last_error(ldc_wrapper_t *handle);
+
+int32_t ldc_set_opus_packetizer(ldc_wrapper_t *handle, int32_t track, uint8_t payload_type, uint32_t clock_rate);
 
 #ifdef __cplusplus
 }
