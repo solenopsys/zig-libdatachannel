@@ -133,7 +133,7 @@ fn addLibDataChannelSharedBuild(
     const configure = b.addSystemCommand(&[_][]const u8{
         "cmake",
         "-S",
-        "vendor/libdatachannel",
+        "vendor/libdatachannel-vendor",
         "-B",
         cmake_build_dir,
         "-G",
@@ -226,7 +226,7 @@ fn addLibDataChannelWrapperBuild(
         .flags = &.{ "-std=c11", "-fPIC" },
     });
     wrapper.root_module.addIncludePath(b.path("include"));
-    wrapper.root_module.addIncludePath(b.path("vendor/libdatachannel/include"));
+    wrapper.root_module.addIncludePath(b.path("vendor/libdatachannel-vendor/include"));
 
     return b.addInstallArtifact(wrapper, .{});
 }
@@ -259,7 +259,7 @@ fn buildForTarget(
 }
 
 pub fn build(b: *std.Build) void {
-    const optimize = b.standardOptimizeOption(.{});
+    const optimize = b.option(std.builtin.OptimizeMode, "optimize", "Prioritize performance, safety, or binary size") orelse .ReleaseFast;
     const artifacts_dir = "../../artifacts/libs";
     const json_path = "current.json";
 
@@ -293,11 +293,11 @@ pub fn build(b: *std.Build) void {
         const install_lib = addLibDataChannelSharedBuild(b, target, optimize, "datachannel");
         const install_wrapper = addLibDataChannelWrapperBuild(b, target, optimize, "datachannel_wrapper");
         const install_rtc_h = b.addInstallHeaderFile(
-            b.path("vendor/libdatachannel/include/rtc/rtc.h"),
+            b.path("vendor/libdatachannel-vendor/include/rtc/rtc.h"),
             "rtc/rtc.h",
         );
         const install_version_h = b.addInstallHeaderFile(
-            b.path("vendor/libdatachannel/include/rtc/version.h"),
+            b.path("vendor/libdatachannel-vendor/include/rtc/version.h"),
             "rtc/version.h",
         );
         const install_wrapper_h = b.addInstallHeaderFile(

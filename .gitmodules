@@ -1,0 +1,3 @@
+[submodule "vendor/libdatachannel-vendor"]
+	path = vendor/libdatachannel-vendor
+	url = https://github.com/paullouisageneau/libdatachannel.git
