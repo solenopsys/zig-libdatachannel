@@ -26,7 +26,13 @@ typedef void (*ldc_message_cb)(int32_t id, const uint8_t *data, size_t len, void
 int32_t ldc_wrapper_create(ldc_wrapper_t **out_handle, const char *lib_path);
 void ldc_wrapper_destroy(ldc_wrapper_t *handle);
 
-int32_t ldc_create_peer_connection(ldc_wrapper_t *handle, const char *stun_url, int32_t *out_pc);
+int32_t ldc_create_peer_connection(
+    ldc_wrapper_t *handle,
+    const char *stun_url,
+    uint16_t port_range_begin,
+    uint16_t port_range_end,
+    int32_t *out_pc
+);
 int32_t ldc_close_peer_connection(ldc_wrapper_t *handle, int32_t pc);
 int32_t ldc_delete_peer_connection(ldc_wrapper_t *handle, int32_t pc);
 
@@ -62,6 +68,13 @@ int32_t ldc_add_opus_track(
 );
 
 int32_t ldc_create_data_channel(ldc_wrapper_t *handle, int32_t pc, const char *label, int32_t *out_dc);
+int32_t ldc_create_websocket_with_header(
+    ldc_wrapper_t *handle,
+    const char *url,
+    const char *header_name,
+    const char *header_value,
+    int32_t *out_ws
+);
 int32_t ldc_create_data_channel_ex(
     ldc_wrapper_t *handle,
     int32_t pc,

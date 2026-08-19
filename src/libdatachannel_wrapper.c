@@ -1,3 +1,7 @@
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
 #include "libdatachannel_wrapper.h"
 
 #include <dlfcn.h>
@@ -95,6 +99,7 @@ struct ldc_wrapper {
 
     int (*rtcCreateDataChannel)(int pc, const char *label);
     int (*rtcCreateDataChannelEx)(int pc, const char *label, const rtcDataChannelInit *init);
+    int (*rtcCreateWebSocketWithHeader)(const char *url, const char *header_name, const char *header_value);
 
     int (*rtcSetOpenCallback)(int id, rtcOpenCallbackFunc cb);
     int (*rtcSetClosedCallback)(int id, rtcClosedCallbackFunc cb);
@@ -109,6 +114,11 @@ struct ldc_wrapper {
     bool (*rtcIsClosed)(int id);
 
     void (*rtcSetUserPointer)(int id, void *ptr);
+
+    // Diagnostic: libdatachannel's process-global logger. cb=NULL routes its
+    // internal ICE/STUN/candidate-pair logging to stdout. Enabled only when
+    // LLM_GATE_LDC_LOG_LEVEL is set (0=none .. 6=verbose).
+    void (*rtcInitLogger)(int level, void *cb);
 
     ldc_pc_ctx *pcs;
     ldc_id_ctx *ids;
@@ -136,6 +146,24 @@ static void *ldc_load_symbol(ldc_wrapper_t *h, const char *name) {
     }
 
     return sym;
+}
+
+/* Resolve the core library beside this wrapper. This avoids depending on the
+ * host's global library path when Centimanus ships its private .so files. */
+static const char *ldc_default_library_path(char path[PATH_MAX]) {
+    Dl_info info = {0};
+    if (dladdr((const void *)&ldc_load_symbol, &info) != 0 && info.dli_fname) {
+        const char *slash = strrchr(info.dli_fname, '/');
+        if (slash) {
+            const size_t directory_len = (size_t)(slash - info.dli_fname + 1);
+            if (directory_len + strlen("libdatachannel.so") + 1 <= PATH_MAX) {
+                memcpy(path, info.dli_fname, directory_len);
+                memcpy(path + directory_len, "libdatachannel.so", strlen("libdatachannel.so") + 1);
+                return path;
+            }
+        }
+    }
+    return "libdatachannel.so";
 }
 
 static ldc_pc_ctx *ldc_find_pc_ctx(ldc_wrapper_t *h, int32_t pc) {
@@ -352,7 +380,8 @@ int32_t ldc_wrapper_create(ldc_wrapper_t **out_handle, const char *lib_path) {
 
     pthread_mutex_init(&h->mu, NULL);
 
-    const char *path = (lib_path && lib_path[0] != '\0') ? lib_path : "libdatachannel.so";
+    char default_path[PATH_MAX];
+    const char *path = (lib_path && lib_path[0] != '\0') ? lib_path : ldc_default_library_path(default_path);
     h->lib = dlopen(path, RTLD_NOW | RTLD_LOCAL);
     if (!h->lib) {
         ldc_set_last_error(h, dlerror());
@@ -405,6 +434,7 @@ int32_t ldc_wrapper_create(ldc_wrapper_t **out_handle, const char *lib_path) {
 
     LDC_LOAD_REQUIRED(rtcCreateDataChannel);
     LDC_LOAD_OPTIONAL(rtcCreateDataChannelEx);
+    LDC_LOAD_REQUIRED(rtcCreateWebSocketWithHeader);
 
     LDC_LOAD_REQUIRED(rtcSetOpenCallback);
     LDC_LOAD_REQUIRED(rtcSetClosedCallback);
@@ -420,8 +450,23 @@ int32_t ldc_wrapper_create(ldc_wrapper_t **out_handle, const char *lib_path) {
 
     LDC_LOAD_REQUIRED(rtcSetUserPointer);
 
+    LDC_LOAD_OPTIONAL(rtcInitLogger);
+
 #undef LDC_LOAD_REQUIRED
 #undef LDC_LOAD_OPTIONAL
+
+    // Opt-in verbose logging of libdatachannel's internal ICE machinery so the
+    // gate logs reveal whether the browser's STUN connectivity checks arrive
+    // and why a candidate pair fails. Off unless LLM_GATE_LDC_LOG_LEVEL is set.
+    {
+        const char *log_env = getenv("LLM_GATE_LDC_LOG_LEVEL");
+        if (log_env && log_env[0] && h->rtcInitLogger) {
+            int lvl = atoi(log_env);
+            if (lvl < 0) lvl = 0;
+            if (lvl > 6) lvl = 6;
+            h->rtcInitLogger(lvl, NULL);
+        }
+    }
 
     ldc_set_last_error(h, "");
     *out_handle = h;
@@ -460,7 +505,13 @@ void ldc_wrapper_destroy(ldc_wrapper_t *handle) {
     free(handle);
 }
 
-int32_t ldc_create_peer_connection(ldc_wrapper_t *handle, const char *stun_url, int32_t *out_pc) {
+int32_t ldc_create_peer_connection(
+    ldc_wrapper_t *handle,
+    const char *stun_url,
+    uint16_t port_range_begin,
+    uint16_t port_range_end,
+    int32_t *out_pc
+) {
     if (!handle || !out_pc) return RTC_ERR_INVALID;
 
     const char *servers[1];
@@ -471,6 +522,10 @@ int32_t ldc_create_peer_connection(ldc_wrapper_t *handle, const char *stun_url, 
         servers[0] = stun_url;
         cfg.iceServers = servers;
         cfg.iceServersCount = 1;
+    }
+    if (port_range_begin != 0 && port_range_end >= port_range_begin) {
+        cfg.portRangeBegin = port_range_begin;
+        cfg.portRangeEnd = port_range_end;
     }
 
     // All our flows drive signaling explicitly (offerer calls
@@ -760,6 +815,20 @@ int32_t ldc_create_data_channel(ldc_wrapper_t *handle, int32_t pc, const char *l
     return RTC_ERR_SUCCESS;
 }
 
+int32_t ldc_create_websocket_with_header(
+    ldc_wrapper_t *handle,
+    const char *url,
+    const char *header_name,
+    const char *header_value,
+    int32_t *out_ws
+) {
+    if (!handle || !url || !header_name || !header_value || !out_ws) return RTC_ERR_INVALID;
+    const int ws = handle->rtcCreateWebSocketWithHeader(url, header_name, header_value);
+    if (ws < 0) return ws;
+    *out_ws = ws;
+    return RTC_ERR_SUCCESS;
+}
+
 int32_t ldc_create_data_channel_ex(
     ldc_wrapper_t *handle,
     int32_t pc,
@@ -876,13 +945,36 @@ int32_t ldc_set_message_callback(ldc_wrapper_t *handle, int32_t id, ldc_message_
 
 int32_t ldc_send_message(ldc_wrapper_t *handle, int32_t id, const uint8_t *data, size_t len) {
     if (!handle || (!data && len > 0) || len > (size_t)INT32_MAX) return RTC_ERR_INVALID;
-    return handle->rtcSendMessage(id, (const char *)data, (int)len);
+    // libdatachannel encodes text frames with a negative size. OpenAI Realtime
+    // accepts JSON only as a WebSocket text frame, not as binary payload.
+    //
+    // The negative-size convention makes libdatachannel treat `data` as a
+    // null-terminated C string (it ignores the magnitude and walks to the NUL).
+    // Our Zig callers pass non-null-terminated slices (allocator.dupe / print /
+    // toOwnedSlice), so a raw pointer here lets libdatachannel read past the
+    // slice until a stray zero byte and append garbage — the server then
+    // rejects the frame as invalid_json, intermittently, depending on whatever
+    // heap byte happens to follow the buffer. Copy into a NUL-terminated
+    // scratch buffer so exactly `len` bytes go out. JSON never contains a NUL,
+    // so termination is unambiguous. Stack for the common small case, heap only
+    // for oversized payloads.
+    char stack_buf[2048];
+    char *buf = stack_buf;
+    if (len + 1 > sizeof(stack_buf)) {
+        buf = (char *)malloc(len + 1);
+        if (!buf) return RTC_ERR_FAILURE;
+    }
+    memcpy(buf, data, len);
+    buf[len] = '\0';
+    int32_t rc = handle->rtcSendMessage(id, buf, -(int)len);
+    if (buf != stack_buf) free(buf);
+    return rc;
 }
 
-// Send binary data (negative size = binary in libdatachannel API). Use for audio tracks.
+// Binary frames use a positive size (for example, PCM audio chunks).
 int32_t ldc_send_binary(ldc_wrapper_t *handle, int32_t id, const uint8_t *data, size_t len) {
     if (!handle || (!data && len > 0) || len > (size_t)INT32_MAX) return RTC_ERR_INVALID;
-    return handle->rtcSendMessage(id, (const char *)data, -(int)len);
+    return handle->rtcSendMessage(id, (const char *)data, (int)len);
 }
 
 int32_t ldc_close_id(ldc_wrapper_t *handle, int32_t id) {
