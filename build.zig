@@ -130,6 +130,11 @@ fn addLibDataChannelSharedBuild(
     const cmake_build_dir = b.fmt(".zig-cache/libdatachannel-openssl/{s}/{s}", .{ target_str, cmake_build_type });
     const cmake_install_dir = b.fmt("{s}/install", .{cmake_build_dir});
 
+    // The vendored checkout is upstream-clean; patches/apply.sh adds the C
+    // exports our wrapper needs and is a no-op once applied.
+    const patch = b.addSystemCommand(&[_][]const u8{b.pathFromRoot("patches/apply.sh")});
+    patch.setName("patch libdatachannel vendor");
+
     const configure = b.addSystemCommand(&[_][]const u8{
         "cmake",
         "-S",
@@ -147,6 +152,15 @@ fn addLibDataChannelSharedBuild(
         b.fmt("-DCMAKE_C_COMPILER_TARGET={s}", .{target_triple}),
         b.fmt("-DCMAKE_CXX_COMPILER_TARGET={s}", .{target_triple}),
         "-DCMAKE_BUILD_WITH_INSTALL_RPATH=ON",
+        // `zig c++` links libc++ statically but does not supply GCC's
+        // crtbeginS.o, so the .so gets no .fini_array entry calling
+        // `__cxa_finalize(__dso_handle)`. Its ~300 static destructors are still
+        // registered with `__cxa_atexit`, so a dlclose() unmaps the library
+        // while leaving those pointers on glibc's exit list, and the process
+        // segfaults in exit(). Pinning the mapping keeps them callable; a
+        // WebRTC stack with live threads and sockets was never safe to unload
+        // mid-process anyway.
+        "-DCMAKE_SHARED_LINKER_FLAGS=-Wl,-z,nodelete",
         "-DBUILD_SHARED_LIBS=ON",
         "-DBUILD_SHARED_DEPS_LIBS=OFF",
         "-DPREFER_SYSTEM_LIB=OFF",
@@ -166,6 +180,7 @@ fn addLibDataChannelSharedBuild(
         "-DRTC_UPDATE_VERSION_HEADER=OFF",
     });
     configure.setName(b.fmt("configure libdatachannel ({s})", .{target_str}));
+    configure.step.dependOn(&patch.step);
 
     const build_cmd = b.addSystemCommand(&[_][]const u8{
         "cmake",

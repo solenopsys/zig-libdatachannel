@@ -1,0 +1,39 @@
+diff --git a/include/rtc/rtc.h b/include/rtc/rtc.h
+index d3f3e4db..ad01bd4a 100644
+--- a/include/rtc/rtc.h
++++ b/include/rtc/rtc.h
+@@ -531,6 +531,11 @@ typedef struct {
+ 
+ RTC_C_EXPORT int rtcCreateWebSocket(const char *url); // returns ws id
+ RTC_C_EXPORT int rtcCreateWebSocketEx(const char *url, const rtcWsConfiguration *config);
++// Opens a WebSocket carrying one extra HTTP request header (e.g. Authorization).
++// The C++ API takes arbitrary headers in WebSocket::open(); this exposes the
++// single-header case the C API is otherwise missing.
++RTC_C_EXPORT int rtcCreateWebSocketWithHeader(const char *url, const char *headerName,
++                                              const char *headerValue);
+ RTC_C_EXPORT int rtcDeleteWebSocket(int ws);
+ 
+ RTC_C_EXPORT int rtcGetWebSocketRemoteAddress(int ws, char *buffer, int size);
+diff --git a/src/capi.cpp b/src/capi.cpp
+index f3385b47..64839c08 100644
+--- a/src/capi.cpp
++++ b/src/capi.cpp
+@@ -1787,6 +1787,18 @@ int rtcCreateWebSocket(const char *url) {
+ 	});
+ }
+ 
++int rtcCreateWebSocketWithHeader(const char *url, const char *headerName,
++                                 const char *headerValue) {
++	return wrap([&] {
++		if (!url || !headerName || !headerValue)
++			throw std::invalid_argument("Unexpected null pointer");
++
++		auto webSocket = std::make_shared<WebSocket>();
++		webSocket->open(url, {{string(headerName), string(headerValue)}});
++		return emplaceWebSocket(webSocket);
++	});
++}
++
+ int rtcCreateWebSocketEx(const char *url, const rtcWsConfiguration *config) {
+ 	return wrap([&] {
+ 		if (!url)
