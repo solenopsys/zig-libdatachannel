@@ -66,7 +66,7 @@ fn addMbedtlsBuild(
     const configure = b.addSystemCommand(&[_][]const u8{
         "cmake",
         "-S",
-        "../mbedtls/vendor/mbedtls",
+        "../mbedtls/vendor/mbedtls-vendor",
         "-B",
         cmake_build_dir,
         "-G",
